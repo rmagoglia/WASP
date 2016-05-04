@@ -627,6 +627,7 @@ class BamScanner:
                 has_junc = True
             else:
                 # There is a non-N/M in the read CIGAR--throw out the read.
+                print('Cigar: ', cigar[0])
                 self.toss += 1
                 return([])
                 
@@ -763,6 +764,9 @@ def main(infile, snp_dir, max_window=MAX_WINDOW_DEFAULT,
                           sort_file_name, keep_file_name, remap_name, 
                           remap_num_name, fastq_names, snp_dir)
     bam_data.run()
+    print("Tossed:", bam_data.toss)
+    print("No Snps:", bam_data.nosnp)
+    print("Reads to remap:", bam_data.remap)
 
 
 
