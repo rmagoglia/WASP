@@ -36,13 +36,12 @@ def get_indels(snpdict):
     indel_dict = defaultdict(lambda : defaultdict(bool))
     for chrom in snp_dict:
         for pos, alleles in snp_dict[chrom].items():
-            indel_dict[chrom][pos] =  max(len(i) for i in alleles) > 1
+            indel_dict[chrom][pos] =  ('-' in alleles) or (max(len(i) for i in alleles) > 1)
     return indel_dict
 
 def get_read_seqs(read, snp_dict, indel_dict, dispositions):
     num_snps = 0
-    seq = read.seq
-    seqs = [seq]
+    seqs = [read.seq]
 
     chrom = read.reference_name
     for (read_pos, ref_pos, read_base) in (read.get_aligned_pairs(matches_only=True, with_seq=True)):
@@ -56,18 +55,21 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
             return []
 
         if ref_pos in snp_dict[chrom]:
-            if read_base in snp_dict[chrom][ref_pos]:
+            if read_base.upper() in snp_dict[chrom][ref_pos]:
                 dispositions['ref_match'] += 1
                 num_snps += 1
-                for new_allele in snp_dict[chrom][ref_pos]:
-                    new_seq = seq[:read_pos] + new_allele + seq[read_pos+1:]
-                    seqs.append(new_seq)
+                for new_allele in snp_dict[chrom][ref_pos].difference({read_base}):
+                    for seq in list(seqs):
+                        # Note that we make a copy up-front to avoid modifying
+                        # the list we're iterating over
+                        new_seq = seq[:read_pos] + new_allele + seq[read_pos+1:]
+                        seqs.append(new_seq)
             else:
                 dispositions['no_match'] += 1
         else:
             # No SNP
             pass
-    if len(seqs) - 1:
+    if len(seqs) == 1:
         dispositions['no_snps'] += 1
     else:
         dispositions['has_snps'] += 1
