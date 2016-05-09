@@ -5,7 +5,6 @@ import pysam
 from collections import defaultdict, Counter
 from glob import glob
 from os import path
-import pandas as pd
 import sys
 import itertools as it
 
@@ -44,7 +43,7 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
     seqs = [read.seq]
 
     chrom = read.reference_name
-    for (read_pos, ref_pos, read_base) in (read.get_aligned_pairs(matches_only=True, with_seq=True)):
+    for (read_pos, ref_pos) in (read.get_aligned_pairs(matches_only=True)):
         if ref_pos == None:
             continue
         if indel_dict[chrom][ref_pos]:
@@ -55,10 +54,12 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
             return []
 
         if ref_pos in snp_dict[chrom]:
-            if read_base.upper() in snp_dict[chrom][ref_pos]:
+            read_base = read.seq[read_pos]
+            if read_base in snp_dict[chrom][ref_pos]:
                 dispositions['ref_match'] += 1
                 num_snps += 1
-                for new_allele in snp_dict[chrom][ref_pos].difference({read_base}):
+                for new_allele in snp_dict[chrom][ref_pos]:
+                    if new_allele == read_base: continue
                     for seq in list(seqs):
                         # Note that we make a copy up-front to avoid modifying
                         # the list we're iterating over
@@ -86,6 +87,9 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
     remap_bam = pysam.Samfile('.'.join([basename, 'to.remap.bam']),
             'wb',
             template=insam)
+    dropped_bam = pysam.Samfile('.'.join([basename, 'dropped.bam']),
+            'wb',
+            template=insam)
     if is_paired:
         fastqs = [
                 gzip.open('.'.join([basename, 'remap.fq1.gz']), 'wt'),
@@ -95,18 +99,23 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
         fastqs = [ gzip.open('.'.join([basename, 'remap.fq.gz']), 'wt'),]
     unpaired_reads = [{}, {}]
     read_results = Counter()
+    remap_num = 1
     for i, read in enumerate(insam):
-        read_seqs = get_read_seqs(read, snp_dict, indel_dict, read_results)
         if not is_paired:
+            read_seqs = get_read_seqs(read, snp_dict, indel_dict, read_results)
             write_read_seqs([(read, read_seqs)], keep, remap_bam, fastqs)
         elif read.is_proper_pair:
-            if read.qname in unpaired_reads[read.is_read1]:
-                both_read_seqs = [None, None]
-                both_read_seqs[read.is_read2] = read, read_seqs
-                both_read_seqs[read.is_read1] = unpaired_reads[read.is_read1].pop(read.qname)
-                write_read_seqs(both_read_seqs, keep, remap_bam, fastqs)
+            slot_self = read.is_read2 # 0 if is_read1, 1 if read2
+            slot_other = read.is_read1
+            if read.qname in unpaired_reads[slot_other]:
+                both_reads = [None, None]
+                both_reads[slot_self] = read
+                both_reads[slot_other] = unpaired_reads[slot_other].pop(read.qname)
+                both_seqs = get_dual_read_seqs(both_reads[0], both_reads[1], snp_dict, indel_dict, read_results)
+                both_read_seqs = list(zip(both_reads, both_seqs))
+                remap_num += write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped_bam, remap_num)
             else:
-                unpaired_reads[read.is_read2][read.qname] = read, read_seqs
+                unpaired_reads[slot_self][read.qname] = read
         else:
             read_results['not_proper_pair'] += 1
             # Most tools assume reads are paired and do not check IDs. Drop it out.
@@ -119,7 +128,7 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
             
 
 
-def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None):
+def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap_num=0):
     reads, seqs = zip(*both_read_seqs)
     assert len(reads) == len(fastqs)
 
@@ -128,9 +137,9 @@ def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None):
         if dropped is not None:
             for read in reads:
                 dropped.write(read)
-            return
+            return 0
         else:
-            pass
+            return 0
     elif num_seqs == 1:
         for read, seqs in both_read_seqs:
             keep.write(read)
@@ -139,29 +148,33 @@ def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None):
             remap_bam.write(read)
         left_pos = min(r.pos for r in reads)
         right_pos = max(r.pos for r in reads)
+        loc_line = '{}:{}:{}:{}:{}'.format(
+                remap_num,
+                read.reference_name,
+                left_pos,
+                right_pos,
+                num_seqs-1,
+                )
 
+        if left_pos == 16053407:
+            print(seqs)
         first = True
         # Some python fanciness to deal with single or paired end reads (or
         # n-ended reads, if such technology ever happens.
-        for remap_num, read_seqs in enumerate(it.product(*seqs)):
+        for read_seqs in it.product(*seqs):
             if first:
                 first = False
                 continue
             for seq, read, fastq in zip(read_seqs, reads, fastqs):
-                loc_line = '{}:{}:{}:{}:{}'.format(
-                        remap_num,
-                        read.reference_name,
-                        left_pos,
-                        right_pos,
-                        num_seqs-1,
-                        )
                 fastq.write(
                         "@{loc_line}\n{seq}\n+{loc_line}\n{qual}\n"
                         .format(
                             loc_line=loc_line,
-                            seq=seq,
+                            seq=reverse_complement(seq) if read.is_reverse else seq,
                             qual=read.qual)
                         )
+        return 1
+    return 0
 
 
 
