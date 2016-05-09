@@ -16,19 +16,27 @@ except ImportError as exc:
     print(exc)
     pass
 
-MAX_SEQS_PER_READ = 32
+MAX_SEQS_PER_READ = 1024
 
 def product(iterable):
     return reduce(mul, iterable, 1)
 
 def get_snps(snpdir):
     snp_dict = defaultdict(lambda : defaultdict(set))
+    if path.exists(path.join(snpdir, 'all.txt.gz')):
+        print("Loading snps from consolidated file")
+        for line in gzip.open(path.join(snpdir, 'all.txt.gz'), 'rt', encoding='ascii'):
+            chrom, pos, ref, alt = line.split()
+            pos = int(pos) - 1
+            snp_dict[chrom][pos].update([ref, alt])
+        return snp_dict
     for fname in glob(path.join(snpdir, '*.txt.gz')):
         chrom = path.basename(fname).split('.')[0]
         i = -1
         for i, line in enumerate(gzip.open(fname, 'rt', encoding='ascii')):
             pos, ref, alt = line.split()
-            snp_dict[chrom][int(pos)-1].update([ref, alt])
+            pos = int(pos) - 1
+            snp_dict[chrom][pos].update([ref, alt])
     return snp_dict
 
 def get_indels(snpdict):
