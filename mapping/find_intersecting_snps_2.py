@@ -46,6 +46,83 @@ def get_indels(snpdict):
             indel_dict[chrom][pos] =  ('-' in alleles) or (max(len(i) for i in alleles) > 1)
     return indel_dict
 
+rc_table = {
+        ord('A'):ord('T'),
+        ord('T'):ord('A'),
+        ord('C'):ord('G'),
+        ord('G'):ord('C'),
+        }
+
+def reverse_complement(seq):
+    return seq.translate(rc_table)[::-1]
+
+
+def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
+    num_snps = 0
+    seq1 = read1.seq
+    seq2 = read2.seq
+    seqs1, seqs2 = [read1.seq], [read2.seq]
+
+    chrom = read1.reference_name
+    snps = {}
+    read_posns = defaultdict(lambda : [None, None])
+
+    for (read_pos1, ref_pos) in read1.get_aligned_pairs(matches_only=True):
+        if indel_dict[chrom][ref_pos]:
+            dispositions['toss_indel'] += 1
+            return [[],[]]
+        if ref_pos in snp_dict[chrom]:
+            snps[ref_pos] = snp_dict[chrom][ref_pos]
+            read_posns[ref_pos][0] = read_pos1
+
+    for (read_pos2, ref_pos) in read2.get_aligned_pairs(matches_only=True):
+        if indel_dict[chrom][ref_pos]:
+            dispositions['toss_indel'] += 1
+            return [[],[]]
+        if ref_pos in snp_dict[chrom]:
+            snps[ref_pos] = snp_dict[chrom][ref_pos]
+            read_posns[ref_pos][1] = read_pos2
+
+    if product(len(i) for i in snps.values()) > MAX_SEQS_PER_READ:
+        dispositions['toss_manysnps'] += 1
+        return [[],[]]
+
+    for ref_pos in snps:
+        alleles = snps[ref_pos]
+        pos1, pos2 = read_posns[ref_pos]
+        new_seqs1 = []
+        new_seqs2 = []
+        if pos1 is None:
+            for allele in alleles:
+                if allele == seq2[pos2]: continue
+                for seq1, seq2 in zip(seqs1, seqs2):
+                    new_seqs1.append(seq1)
+                    new_seqs2.append(''.join([seq2[:pos2], allele, seq2[pos2+1:]]))
+
+        elif pos2 is None:
+            for allele in alleles:
+                if allele == seq1[pos1]: continue
+                for seq1, seq2 in zip(seqs1, seqs2):
+                    new_seqs1.append(''.join([seq1[:pos1], allele, seq1[pos1+1:]]))
+                    new_seqs2.append(seq2)
+        else:
+            if seq1[pos1] != seq2[pos2]:
+                dispositions['toss_anomalous_phase']
+                return [[],[]]
+            for allele in alleles:
+                if allele == seq2[pos2]: continue
+                for seq1, seq2 in zip(seqs1, seqs2):
+                    new_seqs1.append(''.join([seq1[:pos1], allele, seq1[pos1+1:]]))
+                    new_seqs2.append(''.join([seq2[:pos2], allele, seq2[pos2+1:]]))
+        seqs1.extend(new_seqs1)
+        seqs2.extend(new_seqs2)
+
+    if len(seqs1) == 1:
+        dispositions['no_snps'] += 1
+    else:
+        dispositions['has_snps'] += 1
+    return seqs1, seqs2
+
 def get_read_seqs(read, snp_dict, indel_dict, dispositions):
     num_snps = 0
     seqs = [read.seq]
