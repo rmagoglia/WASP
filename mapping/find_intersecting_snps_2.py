@@ -22,13 +22,13 @@ def product(iterable):
     return reduce(mul, iterable, 1)
 
 def get_snps(snpdir):
-    snp_dict = defaultdict(lambda : defaultdict(set))
+    snp_dict = defaultdict(dict)
     if path.exists(path.join(snpdir, 'all.txt.gz')):
         print("Loading snps from consolidated file")
         for line in gzip.open(path.join(snpdir, 'all.txt.gz'), 'rt', encoding='ascii'):
             chrom, pos, ref, alt = line.split()
             pos = int(pos) - 1
-            snp_dict[chrom][pos].update([ref, alt])
+            snp_dict[chrom][pos] = "".join([ref, alt])
         return snp_dict
     for fname in glob(path.join(snpdir, '*.txt.gz')):
         chrom = path.basename(fname).split('.')[0]
@@ -36,7 +36,7 @@ def get_snps(snpdir):
         for i, line in enumerate(gzip.open(fname, 'rt', encoding='ascii')):
             pos, ref, alt = line.split()
             pos = int(pos) - 1
-            snp_dict[chrom][pos].update([ref, alt])
+            snp_dict[chrom][pos] = "".join([ref, alt])
     return snp_dict
 
 def get_indels(snpdict):
