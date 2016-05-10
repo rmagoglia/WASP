@@ -31,6 +31,7 @@ def get_snps(snpdir):
             snp_dict[chrom][pos] = "".join([ref, alt])
         return snp_dict
     for fname in glob(path.join(snpdir, '*.txt.gz')):
+        print("Loading snps from ", fname)
         chrom = path.basename(fname).split('.')[0]
         i = -1
         for i, line in enumerate(gzip.open(fname, 'rt', encoding='ascii')):
@@ -43,7 +44,8 @@ def get_indels(snpdict):
     indel_dict = defaultdict(lambda : defaultdict(bool))
     for chrom in snp_dict:
         for pos, alleles in snp_dict[chrom].items():
-            indel_dict[chrom][pos] =  ('-' in alleles) or (max(len(i) for i in alleles) > 1)
+            if ('-' in alleles) or (max(len(i) for i in alleles) > 1):
+                indel_dict[chrom][pos] =  True
     return indel_dict
 
 rc_table = {
@@ -293,5 +295,7 @@ if __name__ == "__main__":
     
     snp_dict = get_snps(options.snp_dir)
     indel_dict = get_indels(snp_dict)
+
+    print("Done with SNPs")
 
     assign_reads(options.infile, snp_dict, indel_dict, options.is_paired_end)
