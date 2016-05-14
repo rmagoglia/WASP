@@ -484,7 +484,7 @@ class BamScanner:
                     seq1s = self.check_for_snps(read, 0)
                     seq2s = self.check_for_snps(pair_read, read.mpos - read.pos)
                     num_seqs = len(seq1s)*len(seq2s)
-                    if (num_seqs == 0) or (num_seqs > 32):
+                    if (num_seqs == 0) or (num_seqs > 1024):
                         break
                     if (num_seqs == 1):
                         self.keep_bam.write(read)
@@ -765,6 +765,7 @@ def main(infile, snp_dir, max_window=MAX_WINDOW_DEFAULT,
                           remap_num_name, fastq_names, snp_dir)
     bam_data.run()
     print("Tossed:", bam_data.toss)
+    print("Window too small:", bam.window_too_small)
     print("No Snps:", bam_data.nosnp)
     print("Reads to remap:", bam_data.remap)
 
