@@ -90,6 +90,9 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
     Note that if the reads overlap, the matching positions in read1 and read2
     will get the same subsitution as each other.
     """
+    if read1.is_unmapped or read2.is_unmapped:
+        dispositions['unmapped read'] += 1
+        return [[], []]
     seq1 = read1.seq
     seq2 = read2.seq
     seqs1, seqs2 = [read1.seq], [read2.seq]
