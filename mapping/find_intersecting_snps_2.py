@@ -6,7 +6,6 @@ from collections import defaultdict, Counter
 from glob import glob
 from os import path
 from pysam import AlignmentFile as Samfile
-import objgraph
 
 try:
     from functools import reduce
@@ -195,8 +194,8 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
     read_results = Counter()
     remap_num = 1
     for i, read in enumerate(insam):
-        if i % 1000 == 0:
-            print("Unpaired reads: ", len(unpaired_reads[0]), len(unpaired_reads[1]))
+        if i % 10000 == 0:
+            pass
         if not is_paired:
             read_seqs = get_read_seqs(read, snp_dict, indel_dict, read_results)
             write_read_seqs([(read, read_seqs)], keep, remap_bam, fastqs)
