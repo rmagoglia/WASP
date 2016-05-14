@@ -40,7 +40,7 @@ def get_snps(snpdir):
     return snp_dict
 
 def get_indels(snp_dict):
-    indel_dict = defaultdict(lambda: defaultdict(bool))
+    indel_dict = defaultdict(dict)
     for chrom in snp_dict:
         for pos, alleles in snp_dict[chrom].items():
             if ('-' in alleles) or (max(len(i) for i in alleles) > 1):
@@ -73,7 +73,7 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
     read_posns = defaultdict(lambda: [None, None])
 
     for (read_pos1, ref_pos) in read1.get_aligned_pairs(matches_only=True):
-        if indel_dict[chrom][ref_pos]:
+        if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
         if ref_pos in snp_dict[chrom]:
@@ -81,7 +81,7 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
             read_posns[ref_pos][0] = read_pos1
 
     for (read_pos2, ref_pos) in read2.get_aligned_pairs(matches_only=True):
-        if indel_dict[chrom][ref_pos]:
+        if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
         if ref_pos in snp_dict[chrom]:
@@ -139,7 +139,7 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
     for (read_pos, ref_pos) in read.get_aligned_pairs(matches_only=True):
         if ref_pos is None:
             continue
-        if indel_dict[chrom][ref_pos]:
+        if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return []
         if len(seqs) > MAX_SEQS_PER_READ:
