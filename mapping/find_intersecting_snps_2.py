@@ -1,3 +1,11 @@
+""" find_intersecting_snps
+
+This is a rewrite of the official WASP code.  It has a more straightforward
+design, that is faster and has no maximum window size, but requires loading all
+SNPs into memory at once. For reference, 70 million SNPs requires about 10GB of
+RAM.
+
+"""
 from __future__ import print_function
 import argparse
 import gzip
@@ -17,9 +25,23 @@ except ImportError as exc:
 MAX_SEQS_PER_READ = 1024
 
 def product(iterable):
+    "Returns the product of all items in the iterable"
     return reduce(mul, iterable, 1)
 
 def get_snps(snpdir):
+    """Get SNPs from a single file or directory of files
+
+    Returns a dictionary of dictionaries:
+    snp_dict = {
+                'chrom1' : {
+                            pos1 : [ref, alt],
+                            pos2 : [ref, alt],
+                           },
+                'chrom2' : {...},
+                ...
+                }
+    where positions are 0-based
+    """
     snp_dict = defaultdict(dict)
     if path.exists(path.join(snpdir, 'all.txt.gz')):
         print("Loading snps from consolidated file")
@@ -39,6 +61,10 @@ def get_snps(snpdir):
     return snp_dict
 
 def get_indels(snp_dict):
+    """Returns a dict-of-dicts with positions of indels
+
+
+    """
     indel_dict = defaultdict(dict)
     for chrom in snp_dict:
         for pos, alleles in snp_dict[chrom].items():
@@ -54,6 +80,7 @@ RC_TABLE = {
 }
 
 def reverse_complement(seq):
+    "Reverse complements the string input"
     return seq.translate(RC_TABLE)[::-1]
 
 
@@ -131,6 +158,10 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
     return seqs1, seqs2
 
 def get_read_seqs(read, snp_dict, indel_dict, dispositions):
+    """ For each read, get all possible SNP substitutions
+
+    for N biallelic snps in the read, will return 2^N reads
+    """
     num_snps = 0
     seqs = [read.seq]
 
@@ -170,6 +201,10 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
     return seqs
 
 def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
+    """ Loop through all the reads in insam and output them to the appropriate file
+
+
+    """
     fname = insam.filename
     if isinstance(fname, bytes):
         fname = fname.decode('ascii')
@@ -223,6 +258,17 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
 
 
 def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap_num=0):
+    """Write the given reads out to the appropriate file
+
+
+    If there are no SNPs in the read, write it to the BAM file `keep`
+
+    If there are too many SNPs, and `dropped` is provided, write the original
+    read out to `dropped`
+
+    Otherwise, output all possible substitutions to the fastqs for remapping,
+    as well as a bam file containing the original read.
+    """
     reads, seqs = zip(*both_read_seqs)
     assert len(reads) == len(fastqs)
 
