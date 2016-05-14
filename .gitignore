@@ -52,3 +52,8 @@ coverage.xml
 # Sphinx documentation
 docs/_build/
 
+# Bio stuff
+*.bam
+*.bam.bai
+*.fq1.gz
+*.fq2.gz
