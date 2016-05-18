@@ -60,7 +60,7 @@ class SNPDB(object):
                 return
             files = [os.path.abspath(os.path.join(snp_file_dir, i)) for i in
                      os.listdir(snp_file_dir)
-                     if i.split('.')[0].startswith('chr')
+                     if i.split('.')[0].startswith('chr') \
                      or i.split('.')[0].isdigit()]
             if not files:
                 raise self.SNP_Error('{} contains no recognizable SNP files'
@@ -82,9 +82,9 @@ class SNPDB(object):
                     for line in fin:
                         pos, ref, alt = line.rstrip().split('\t')
                         pos = int(pos)
-                        expr = ("INSERT INTO '{}' VALUES ('{}','{}','{}')"
-                                .format(chrom, pos, ref, alt))
-                        self._c.execute(expr)
+                        expr = ("INSERT INTO '{}' VALUES (?,?,?)"
+                                .format(chrom))
+                        self._c.execute(expr, (pos, ref, alt))
                         length += 1
                 self.chromosomes[chrom] = self.Chromosome(self, chrom, length)
                 self._conn.commit()
@@ -107,32 +107,45 @@ class SNPDB(object):
                     os.remove(self.db)
                 if os.path.exists(self.db):
                     sys.stderr.write('Using existing database {}.\n'
-                                    .format(self.db))
+                                     .format(self.db))
                     self._initdb()
                     return
                 self._initdb()
+                sys.stderr.write('Creating SNP database {}\n'.format(self.db))
                 with open_zipped(snp_file_dir) as fin:
                     header = fin.readline().rstrip()
                     if header.startswith('##'):
                         if 'VCF' not in header:
                             raise self.SNP_Error('VCF file should start with '
-                                                '##fileformat=VCF')
+                                                 '##fileformat=VCF')
                     elif header.startswith('#') and not header.startswith('#CHROM'):
                         raise self.SNP_Error('VCF Header should start with #CHROM')
                     elif not header.split('\t')[1].isdigit():
                         raise self.SNP_Error('VCF file appears malformatted, '
-                                            'second column should be an int.')
+                                             'second column should be an int.')
                     fin.seek(0)
+                    self._setpragma('off')
+                    count = int(1e6)
+                    data = []
                     for line in fin:
                         if line.startswith('#'):
                             continue
                         chrom, pos, _, ref, alt = line.split('\t')[:5]
                         self._add_table_if_none(chrom)
-                        pos = int(pos)
+                        data.append((int(pos), ref, alt))
+                        count -= 1
+                        if not count:
+                            expr = ("INSERT INTO '{}' VALUES (?,?,?)"
+                                    .format(chrom))
+                            self._c.executemany(expr, data)
+                            count = int(1e6)
+                            data = []
+                    if data:
                         expr = ("INSERT INTO '{}' VALUES (?,?,?)"
                                 .format(chrom))
-                        self._c.execute(expr, (pos, ref, alt))
+                        self._c.executemany(expr, data)
                     self._conn.commit()
+                    self._setpragma('on')
                 self.length = len(self)
 
         else:
@@ -182,6 +195,7 @@ class SNPDB(object):
                 "and type='table';").format(table)
         self._c.execute(expr)
         if not self._c.fetchall():
+            sys.stderr.write('Adding chromosome {}\n'.format(table))
             exp = ("CREATE TABLE '{}' (pos int, ref text, alt text);"
                    .format(table))
             self._c.execute(exp)
@@ -192,12 +206,23 @@ class SNPDB(object):
         self._conn = sqlite3.connect(self.db)
         self._c    = self._conn.cursor()
 
+    def _setpragma(self, mode='on'):
+        """ Set the sqlite pragma mode for speedup. """
+        if mode == 'off':
+            self._c.execute("PRAGMA synchronous  = OFF")
+        elif mode == 'on':
+            self._c.execute("PRAGMA synchronous  = ON")
+            self._conn.close()
+            self._initdb()
+        else:
+            raise Exception("Invalid mode to _setjournal. Must be 'on' or 'off'")
+
     def _create_indices(self):
         """ Add the indicies needed for fast lookups. """
         self._c.execute("SELECT name FROM sqlite_master WHERE type='table';")
         for i in self._c.fetchall():
             exp = ("CREATE INDEX '{0}_pos' ON '{0}' " +
-                    "(pos)").format(i[0])
+                   "(pos)").format(i[0])
             self._c.execute(exp)
             self._conn.commit()
 
@@ -234,12 +259,10 @@ class SNPDB(object):
 
         def __iter__(self):
             """Loop through all SNPs."""
-            self._parent._c.execute("SELECT pos FROM {};".format(self.name))
-            positions = frozenset(self._parent._c.fetchall())
-            for pos in positions:
-                pos = pos[0]
-                ref, alt = self.find(pos)
-                yield pos, ref, alt
+            self._parent._c.execute("SELECT * FROM {};".format(self.name))
+            for row in self.parent._c:
+                pos, ref, alt = row
+                yield self.name, pos, ref, alt
 
     #################
     #  Error Class  #
@@ -277,7 +300,7 @@ class SNPDB(object):
     def __getattr__(self, attr):
         """Prevent lookup of attributes if already set."""
         if attr == 'length':
-            return self.length if hasattr(self, length) else len(self)
+            return self.length if hasattr(self, 'length') else len(self)
 
     def __len__(self):
         """The total number of SNPs."""
@@ -308,8 +331,8 @@ class SNPDB(object):
         """Print chromosome lengths."""
         output = ('SNPDB Object. Total SNPs: {}. Chromosomes::\n'
                   .format(self.length))
-        for chrom, len in self.chromosomes.items():
-            output += '\tchromosome {}: {} SNPs\n'.format(chrom, len)
+        for chrom, length in self.chromosomes.items():
+            output += '\tchromosome {}: {} SNPs\n'.format(chrom, length)
         return output
 
 
