@@ -27,7 +27,6 @@ except ImportError as exc:
     print(exc)
 
 MAX_SEQS_PER_READ = 1024
-SNPs = None # Used to hold the SNP class, since we only want on
 
 
 class SNPDB(object):
@@ -247,36 +246,12 @@ def product(iterable):
     "Returns the product of all items in the iterable"
     return reduce(mul, iterable, 1)
 
-def snp_db(snpdir):
-    """ Return the SNP database from a SNP directory, create if necessary. """
-    snp_dict = defaultdict(dict)
-    if path.exists(path.join(snpdir, 'all.txt.gz')):
-        print("Loading snps from consolidated file")
-        for line in gzip.open(path.join(snpdir, 'all.txt.gz'), 'rt', encoding='ascii'):
-            chrom, pos, ref, alt = line.split()
-            pos = int(pos) - 1
-            snp_dict[chrom][pos] = "".join([ref, alt])
-        return snp_dict
-    for fname in glob(path.join(snpdir, '*.txt.gz')):
-        print("Loading snps from ", fname)
-        chrom = path.basename(fname).split('.')[0]
-        i = -1
-        for i, line in enumerate(gzip.open(fname, 'rt', encoding='ascii')):
-            pos, ref, alt = line.split()
-            pos = int(pos) - 1
-            snp_dict[chrom][pos] = "".join([ref, alt])
-    return snp_dict
-
-def get_indels(snp_dict):
-    """Returns a dict-of-dicts with positions of indels
-
-
-    """
+def get_indels(snps):
+    """Returns a dict-of-dicts with positions of indels."""
     indel_dict = defaultdict(dict)
-    for chrom in snp_dict:
-        for pos, alleles in snp_dict[chrom].items():
-            if ('-' in alleles) or (max(len(i) for i in alleles) > 1):
-                indel_dict[chrom][pos] = True
+    for chrom, pos, ref, alt in snps:
+        if ('-' in [ref, alt]) or (max(len(i) for i in [ref, alt]) > 1):
+            indel_dict[chrom][pos] = True
     return indel_dict
 
 RC_TABLE = {
@@ -291,7 +266,7 @@ def reverse_complement(seq):
     return seq.translate(RC_TABLE)[::-1]
 
 
-def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
+def get_dual_read_seqs(read1, read2, snps, indel_dict, dispositions):
     """ For each pair of reads, get all concordant SNP substitutions
 
     Note that if the reads overlap, the matching positions in read1 and read2
@@ -312,16 +287,18 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
         if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
-        if ref_pos in snp_dict[chrom]:
-            snps[ref_pos] = snp_dict[chrom][ref_pos]
+        allele_info = snps[chrom, ref_pos]
+        if allele_info:
+            snps[ref_pos] = allele_info
             read_posns[ref_pos][0] = read_pos1
 
     for (read_pos2, ref_pos) in read2.get_aligned_pairs(matches_only=True):
         if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
-        if ref_pos in snp_dict[chrom]:
-            snps[ref_pos] = snp_dict[chrom][ref_pos]
+        allele_info = snps[chrom, ref_pos]
+        if allele_info:
+            snps[ref_pos] = allele_info
             read_posns[ref_pos][1] = read_pos2
 
     if product(len(i) for i in snps.values()) > MAX_SEQS_PER_READ:
@@ -367,7 +344,7 @@ def get_dual_read_seqs(read1, read2, snp_dict, indel_dict, dispositions):
         dispositions['has_snps'] += 1
     return seqs1, seqs2
 
-def get_read_seqs(read, snp_dict, indel_dict, dispositions):
+def get_read_seqs(read, snps, indel_dict, dispositions):
     """ For each read, get all possible SNP substitutions
 
     for N biallelic snps in the read, will return 2^N reads
@@ -386,12 +363,13 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
             dispositions['toss_manysnps'] += 1
             return []
 
-        if ref_pos in snp_dict[chrom]:
+        alleles = snps[chrom, ref_pos]
+        if alleles:
             read_base = read.seq[read_pos]
-            if read_base in snp_dict[chrom][ref_pos]:
+            if read_base in alleles:
                 dispositions['ref_match'] += 1
                 num_snps += 1
-                for new_allele in snp_dict[chrom][ref_pos]:
+                for new_allele in alleles:
                     if new_allele == read_base:
                         continue
                     for seq in list(seqs):
@@ -410,7 +388,7 @@ def get_read_seqs(read, snp_dict, indel_dict, dispositions):
         dispositions['has_snps'] += 1
     return seqs
 
-def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
+def assign_reads(insam, snps, indel_dict, is_paired=True):
     """ Loop through all the reads in insam and output them to the appropriate file
 
 
@@ -442,7 +420,7 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
         if i % 10000 == 0:
             pass
         if not is_paired:
-            read_seqs = get_read_seqs(read, snp_dict, indel_dict, read_results)
+            read_seqs = get_read_seqs(read, snps, indel_dict, read_results)
             write_read_seqs([(read, read_seqs)], keep, remap_bam, fastqs)
         elif read.is_proper_pair:
             slot_self = read.is_read2 # 0 if is_read1, 1 if read2
@@ -452,7 +430,7 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
                 both_reads[slot_self] = read
                 both_reads[slot_other] = unpaired_reads[slot_other].pop(read.qname)
                 both_seqs = get_dual_read_seqs(both_reads[0], both_reads[1],
-                                               snp_dict, indel_dict, read_results)
+                                               snps, indel_dict, read_results)
                 both_read_seqs = list(zip(both_reads, both_seqs))
                 remap_num += write_read_seqs(both_read_seqs, keep, remap_bam,
                                              fastqs, dropped_bam, remap_num)
@@ -528,7 +506,6 @@ def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap
     return 0
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--paired_end",
@@ -556,15 +533,10 @@ if __name__ == "__main__":
 
     options = parser.parse_args()
 
-    global SNP_DIR
-    SNP_DIR    = snp_db(options.snp_dict)
-    INDEL_DICT = get_indels(SNP_DICT)
-
-    if not SNP_DIR:
-        sys.stderr.write('{} does not seem like a snp directory.\n'
-                         'Please confirm that it is properly formatted\n'
-                         '{}\n'.format(snp_dir_help))
+    global SNPS
+    snps       = SNPDB(options.snp_dir)
+    indel_dict = get_indels(snps)
 
     print("Done with SNPs")
 
-    assign_reads(options.infile, SNP_DICT, INDEL_DICT, options.is_paired_end)
+    assign_reads(options.infile, snps, indel_dict, options.is_paired_end)
