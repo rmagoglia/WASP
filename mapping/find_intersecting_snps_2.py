@@ -10,6 +10,10 @@ from __future__ import print_function
 import argparse
 import gzip
 import itertools as it
+import bz2
+import sqlite3
+import os
+import sys
 from collections import defaultdict, Counter
 from glob import glob
 from os import path
@@ -23,25 +27,228 @@ except ImportError as exc:
     print(exc)
 
 MAX_SEQS_PER_READ = 1024
+SNPs = None # Used to hold the SNP class, since we only want on
+
+
+class SNPDB(object):
+
+    """A wrapper for an sqlite SNP database."""
+
+    def __init__(self, snp_file_dir, db_file=None, overwrite=False):
+        """Initialize a SNPS object from a snp_dir or bed file.
+
+        :snp_file_dir: Either a dir with one file per chromosome in the format:
+                            <pos> <ref> <alt>
+                       or a simple vcf file.
+        :db_file:      Optional file path for the db.
+        :overwrite:    Delete db and create a new one.
+
+        """
+        self.chromosomes = {}
+
+        if db_file:
+            self.db = os.path.abspath(db_file)
+
+        if os.path.isdir(snp_file_dir):
+            if not self.db:
+                self.db = os.path.abspath(os.path.join(snp_file_dir, 'snps.db'))
+            if overwrite and os.path.isfile(self.db):
+                os.remove(self.db)
+            if os.path.isfile(self.db):
+                self._initdb()
+                self.length = len(self)  # Make sure chromosome dict is set
+                return
+            files = [os.path.abspath(os.path.join(snp_file_dir, i)) for i in
+                     os.listdir(snp_file_dir)
+                     if i.split('.')[0].startswith('chr')
+                     or i.split('.')[0].isdigit()]
+            if not files:
+                raise self.SNP_Error('{} contains no recognizable SNP files'
+                                     .format(snp_file_dir))
+            sys.stderr.write('Creating SNP database {}\n'.format(self.db))
+            # Create database here
+            self._initdb()
+            for fl in files:
+                chrom = os.path.basename(fl).split('.')[0]
+                self._add_table_if_none(chrom)
+                self.chromosomes[chrom] = 0
+                with open_zipped(fl) as fin:
+                    tln = fin.readline().rstrip().split('\t')
+                    if len(tln) != 3 or not tln[0].isdigit():
+                        sys.stderr.write(tln + '\n')
+                        raise self.SNP_Error('File {} is not a snp file.'
+                                             .format(fl))
+                    fin.seek(0)
+                    for line in fin:
+                        pos, ref, alt = line.rstrip().split('\t')
+                        pos = int(pos)
+                        expr = ("INSERT INTO '{}' VALUES ('{}','{}','{}')"
+                                .format(chrom, pos, ref, alt))
+                        self._c.execute(expr)
+                        self.chromosomes[chrom] += 1
+                self._conn.commit()
+
+        elif os.path.isfile(snp_file_dir):
+            sys.stderr.write('Not implemented yet.\n')
+            return
+        else:
+            raise OSError('File not found {}'.format(snp_file_dir))
+
+        # Create indicies
+        self._create_indices()
+
+    def find(self, chromosome, location=None):
+        """ Return ref, alt if found, None if not. """
+        if chromosome not in self.chromosomes:
+            sys.stderr.write("WARNING --> Chromosome '{}' is not in chromosome"
+                             "list.\n")
+            return None
+
+        tables = 'ref,alt' if location else 'pos,ref,alt'
+        expr = "SELECT {0} FROM '{1}'".format(tables, chromosome)
+        if location:
+            expr += (" INDEXED BY '{0}_pos' WHERE pos = {1}"
+                     .format(chromosome, location))
+
+        try:
+            self._c.execute(expr)
+        except sqlite3.OperationalError as e:
+            if str(e).startswith('no such table'):
+                sys.stderr.write("WARNING --> Chromosome '{}' is not in "
+                                 "the lookup table, lookup failed.\n"
+                                 .format(chromosome))
+                return None
+            else:
+                sys.stderr.write(expr + '\n')
+                raise(e)
+
+        answer = self._c.fetchall()
+        if answer:
+            return answer[0] if location else answer
+        else:
+            return None
+
+    #######################
+    #  Private Functions  #
+    #######################
+
+    def _add_table_if_none(self, table):
+        """ Add a table if it does not already exist. """
+        expr = ("SELECT * FROM sqlite_master WHERE name = '{}' " +
+                "and type='table';").format(table)
+        self._c.execute(expr)
+        if not self._c.fetchall():
+            exp = ("CREATE TABLE '{}' (pos int, ref text, alt text);"
+                   .format(table))
+            self._c.execute(exp)
+            self._conn.commit()
+
+    def _initdb(self):
+        """ Ininitialize the database connection. """
+        self._conn = sqlite3.connect(self.db)
+        self._c    = self._conn.cursor()
+
+    def _create_indices(self):
+        """ Add the indicies needed for fast lookups. """
+        self._c.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        for i in self._c.fetchall():
+            exp = ("CREATE INDEX '{0}_pos' ON '{0}' " +
+                    "(pos)").format(i[0])
+            self._c.execute(exp)
+            self._conn.commit()
+
+    #################
+    #  Error Class  #
+    #################
+
+    class SNP_Error(Exception):
+
+        """ An exception class for SNP parsing issues. """
+
+    ###############
+    #  Internals  #
+    ###############
+
+    def __getitem__(self, item):
+        """Alias for find, syntax: SNPDB[chr,pos]."""
+        if isinstance(item, (list, tuple)):
+            if len(item) is 2:
+                return self.find(item[0], item[1])
+            elif len(item) is 1:
+                return self.find(item[0])
+            else:
+                raise self.SNP_Error('list must be chr,pos or chr only')
+        elif isinstance(item, str):
+            return self.find(item)
+        else:
+            raise TypeError('{} should be chr or [chr, pos], is {}'
+                            .format(item, type(item)))
+
+    def __getattr__(self, attr):
+        """Prevent lookup of attributes if already set."""
+        if attr == length:
+            return self.length if hasattr(self, length) else len(self)
+
+    def __len__(self):
+        """The total number of SNPs."""
+        length = 0
+        self._c.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        chromosomes = self._c.fetchone()
+        for chrom in chromosomes:
+            self._c.execute("SELECT Count(*) FROM '{}';".format(chrom))
+            l = self._c.fetchone()[0]
+            self.chromosomes[chrom] = l
+            length += l
+        self.length = length
+        return length
+
+    def __iter__(self):
+        """Iterate over every SNP."""
+        for chrom in self.chromosomes:
+            self._c.execute("SELECT pos FROM {};".format(chrom))
+            positions = frozenset(self._c.fetchall())
+            for pos in positions:
+                pos = pos[0]
+                ref, alt = self.find(chrom, pos)
+                yield chrom, pos, ref, alt
+
+    def __repr__(self):
+        """Basic information about this class."""
+        return "SNPDB<len: {}>".format(self.length)
+
+    def __str__(self):
+        """Print chromosome lengths."""
+        output = ('SNPDB Object. Total SNPs: {}. Chromosomes::\n'
+                  .format(self.length))
+        for chrom, len in self.chromosomes.items():
+            output += '\tchromosome {}: {} SNPs\n'.format(chrom, len)
+        return output
+
+
+def open_zipped(infile, mode='r'):
+    """ Return file handle of file regardless of zipped or not
+        Text mode enforced for compatibility with python2 """
+    mode   = mode[0] + 't'
+    p2mode = mode
+    if hasattr(infile, 'write'):
+        return infile
+    if isinstance(infile, str):
+        if infile.endswith('.gz'):
+            return gzip.open(infile, mode)
+        if infile.endswith('.bz2'):
+            if hasattr(bz2, 'open'):
+                return bz2.open(infile, mode)
+            else:
+                return bz2.BZ2File(infile, p2mode)
+        return open(infile, p2mode)
+
 
 def product(iterable):
     "Returns the product of all items in the iterable"
     return reduce(mul, iterable, 1)
 
-def get_snps(snpdir):
-    """Get SNPs from a single file or directory of files
-
-    Returns a dictionary of dictionaries:
-    snp_dict = {
-                'chrom1' : {
-                            pos1 : [ref, alt],
-                            pos2 : [ref, alt],
-                           },
-                'chrom2' : {...},
-                ...
-                }
-    where positions are 0-based
-    """
+def snp_db(snpdir):
+    """ Return the SNP database from a SNP directory, create if necessary. """
     snp_dict = defaultdict(dict)
     if path.exists(path.join(snpdir, 'all.txt.gz')):
         print("Loading snps from consolidated file")
@@ -349,8 +556,14 @@ if __name__ == "__main__":
 
     options = parser.parse_args()
 
-    SNP_DICT = get_snps(options.snp_dir)
+    global SNP_DIR
+    SNP_DIR    = snp_db(options.snp_dict)
     INDEL_DICT = get_indels(SNP_DICT)
+
+    if not SNP_DIR:
+        sys.stderr.write('{} does not seem like a snp directory.\n'
+                         'Please confirm that it is properly formatted\n'
+                         '{}\n'.format(snp_dir_help))
 
     print("Done with SNPs")
 
