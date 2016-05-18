@@ -71,6 +71,7 @@ class SNPDB(object):
                 chrom = os.path.basename(fl).split('.')[0]
                 self._add_table_if_none(chrom)
                 self.chromosomes[chrom] = 0
+                print("Loading SNPs from", fl)
                 with open_zipped(fl) as fin:
                     tln = fin.readline().rstrip().split('\t')
                     if len(tln) != 3 or not tln[0].isdigit():
@@ -78,13 +79,11 @@ class SNPDB(object):
                         raise self.SNP_Error('File {} is not a snp file.'
                                              .format(fl))
                     fin.seek(0)
-                    for line in fin:
-                        pos, ref, alt = line.rstrip().split('\t')
-                        pos = int(pos)
-                        expr = ("INSERT INTO '{}' VALUES ('{}','{}','{}')"
-                                .format(chrom, pos, ref, alt))
-                        self._c.execute(expr)
-                        self.chromosomes[chrom] += 1
+                    self._c.executemany("INSERT INTO '{}' VALUES (?, ?, ?)"
+                                        .format(chrom),
+                                        (line.strip().split('\t') for line in fin)
+                                       )
+                    self.chromosomes[chrom] += 1
                 self._conn.commit()
 
         elif os.path.isfile(snp_file_dir):
@@ -99,8 +98,6 @@ class SNPDB(object):
     def find(self, chromosome, location=None):
         """ Return ref, alt if found, None if not. """
         if chromosome not in self.chromosomes:
-            sys.stderr.write("WARNING --> Chromosome '{}' is not in chromosome"
-                             "list.\n")
             return None
 
         tables = 'ref,alt' if location else 'pos,ref,alt'
@@ -192,8 +189,9 @@ class SNPDB(object):
         """The total number of SNPs."""
         length = 0
         self._c.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        chromosomes = self._c.fetchone()
+        chromosomes = self._c.fetchall()
         for chrom in chromosomes:
+            chrom = chrom[0]
             self._c.execute("SELECT Count(*) FROM '{}';".format(chrom))
             l = self._c.fetchone()[0]
             self.chromosomes[chrom] = l
@@ -204,6 +202,7 @@ class SNPDB(object):
     def __iter__(self):
         """Iterate over every SNP."""
         for chrom in self.chromosomes:
+            print("Iterating over chromosome {}".format(chrom))
             self._c.execute("SELECT * FROM {};".format(chrom))
             for row in self._c:
                 pos, ref, alt = row
