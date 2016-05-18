@@ -70,7 +70,7 @@ class SNPDB(object):
             for fl in files:
                 chrom = os.path.basename(fl).split('.')[0]
                 self._add_table_if_none(chrom)
-                self.chromosomes[chrom] = 0
+                length = 0
                 with open_zipped(fl) as fin:
                     tln = fin.readline().rstrip().split('\t')
                     if len(tln) != 3 or not tln[0].isdigit():
@@ -84,7 +84,8 @@ class SNPDB(object):
                         expr = ("INSERT INTO '{}' VALUES ('{}','{}','{}')"
                                 .format(chrom, pos, ref, alt))
                         self._c.execute(expr)
-                        self.chromosomes[chrom] += 1
+                        length += 1
+                self.chromosomes[chrom] = self.Chromosome(self, chrom, length)
                 self._conn.commit()
 
         elif os.path.isfile(snp_file_dir):
@@ -127,9 +128,9 @@ class SNPDB(object):
         else:
             return None
 
-    #######################
-    #  Private Functions  #
-    #######################
+    #####################
+    #  Private Methods  #
+    #####################
 
     def _add_table_if_none(self, table):
         """ Add a table if it does not already exist. """
@@ -156,6 +157,46 @@ class SNPDB(object):
             self._c.execute(exp)
             self._conn.commit()
 
+    ############################
+    #  Chromosome Child Class  #
+    ############################
+
+    class Chromosome(object):
+
+        """A wrapper to make accessing data by chromosome easier."""
+
+        def __init__(self, parent, name, length):
+            """Add simple stats."""
+            self.name    = name
+            self.length  = length
+            self._parent = parent
+
+        def find(self, pos=None):
+            """Wrapper for find."""
+            return self._parent.find(self.name, pos)
+
+        def __getitem__(self, pos):
+            """Wrapper for find."""
+            return self.find(pos)
+
+        def __repr__(self):
+            """Simple data."""
+            return "SNPDB<Chromosome({}: {} SNPs)>".format(self.name,
+                                                           self.length)
+
+        def __str__(self):
+            """Pretty data."""
+            return "Chromosome {}: {} SNPs".format(self.name, self.length)
+
+        def __iter__(self):
+            """Loop through all SNPs."""
+            self._parent._c.execute("SELECT pos FROM {};".format(self.name))
+            positions = frozenset(self._parent._c.fetchall())
+            for pos in positions:
+                pos = pos[0]
+                ref, alt = self.find(pos)
+                yield pos, ref, alt
+
     #################
     #  Error Class  #
     #################
@@ -174,18 +215,24 @@ class SNPDB(object):
             if len(item) is 2:
                 return self.find(item[0], item[1])
             elif len(item) is 1:
-                return self.find(item[0])
+                if item[0] in self.chromsomes:
+                    return self.chromosomes[item[0]]
+                else:
+                    return self.find(item[0])
             else:
                 raise self.SNP_Error('list must be chr,pos or chr only')
         elif isinstance(item, str):
-            return self.find(item)
+            if item in self.chromosomes:
+                return self.chromosomes[item]
+            else:
+                return self.find(item)
         else:
             raise TypeError('{} should be chr or [chr, pos], is {}'
                             .format(item, type(item)))
 
     def __getattr__(self, attr):
         """Prevent lookup of attributes if already set."""
-        if attr == length:
+        if attr == 'length':
             return self.length if hasattr(self, length) else len(self)
 
     def __len__(self):
@@ -196,7 +243,7 @@ class SNPDB(object):
         for chrom in chromosomes:
             self._c.execute("SELECT Count(*) FROM '{}';".format(chrom))
             l = self._c.fetchone()[0]
-            self.chromosomes[chrom] = l
+            self.chromosomes[chrom] = self.Chromosome(self, chrom, l)
             length += l
         self.length = length
         return length
