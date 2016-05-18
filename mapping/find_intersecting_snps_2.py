@@ -295,11 +295,9 @@ class SNPDB(object):
     def __iter__(self):
         """Iterate over every SNP."""
         for chrom in self.chromosomes:
-            self._c.execute("SELECT pos FROM {};".format(chrom))
-            positions = frozenset(self._c.fetchall())
-            for pos in positions:
-                pos = pos[0]
-                ref, alt = self.find(chrom, pos)
+            self._c.execute("SELECT * FROM {};".format(chrom))
+            for row in self._c:
+                pos, ref, alt = row
                 yield chrom, pos, ref, alt
 
     def __repr__(self):
