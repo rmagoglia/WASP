@@ -45,6 +45,12 @@ class SNPDB(object):
 
         if db_file:
             self.db = os.path.abspath(db_file)
+            if os.path.isfile(self.db) and os.path.getsize(self.db) > 1000:
+                sys.stderr.write('Using existing database {}.\n'
+                                 .format(self.db))
+                self._initdb()
+                self.length = len(self)
+                return
 
         if os.path.isdir(snp_file_dir):
             if not self.db:
@@ -104,6 +110,7 @@ class SNPDB(object):
                     sys.stderr.write('Using existing database {}.\n'
                                      .format(self.db))
                     self._initdb()
+                    self.length = len(self)
                     return
                 self._initdb()
                 sys.stderr.write('Creating SNP database {}\n'.format(self.db))
@@ -253,7 +260,7 @@ class SNPDB(object):
         def __iter__(self):
             """Loop through all SNPs."""
             self._parent._c.execute("SELECT * FROM {};".format(self.name))
-            for row in self.parent._c:
+            for row in self._parent._c:
                 pos, ref, alt = row
                 yield self.name, pos, ref, alt
 
@@ -293,7 +300,7 @@ class SNPDB(object):
     def __getattr__(self, attr):
         """Prevent lookup of attributes if already set."""
         if attr == "length":
-            return self.length if hasattr(self, "length") else len(self)
+            return len(self)
 
     def __len__(self):
         """The total number of SNPs."""
