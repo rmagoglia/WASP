@@ -180,8 +180,8 @@ class SNPDB(object):
 
     def __getattr__(self, attr):
         """Prevent lookup of attributes if already set."""
-        if attr == length:
-            return self.length if hasattr(self, length) else len(self)
+        if attr == "length":
+            return self.length if hasattr(self, "length") else len(self)
 
     def __len__(self):
         """The total number of SNPs."""
