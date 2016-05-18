@@ -38,8 +38,8 @@ class SNPDB(object):
 
         :snp_file_dir: Either a dir with one file per chromosome in the format:
                             <pos> <ref> <alt>
-                       or a simple vcf file.
-        :db_file:      Optional file path for the db.
+                       a simple vcf file or a path to the database.
+        :db_file:      Optional file path for the db if different from default.
         :overwrite:    Delete db and create a new one.
 
         """
@@ -51,7 +51,8 @@ class SNPDB(object):
         if os.path.isdir(snp_file_dir):
             if not self.db:
                 self.db = os.path.abspath(os.path.join(snp_file_dir, 'snps.db'))
-            if overwrite and os.path.isfile(self.db):
+            if os.path.isfile(self.db) and overwrite \
+                    or os.path.getsize(self.db) < 1000:
                 os.remove(self.db)
             if os.path.isfile(self.db):
                 self._initdb()
@@ -89,8 +90,51 @@ class SNPDB(object):
                 self._conn.commit()
 
         elif os.path.isfile(snp_file_dir):
-            sys.stderr.write('Not implemented yet.\n')
-            return
+            name_parts = os.path.basename(snp_file_dir).split('.')
+            if 'db' in name_parts:
+                self.db = os.path.abspath(snp_file_dir)
+                sys.stderr.write('Using existing database {}.\n'
+                                 .format(self.db))
+                self._initdb()
+                self.length = len(self)
+                return
+            elif 'vcf' in name_parts:
+                if not self.db:
+                    self.db = ('.'.join(name_parts[0:name_parts.index('vcf')]) +
+                               '.db')
+                if os.path.isfile(self.db) and overwrite \
+                        or os.path.getsize(self.db) < 1000:
+                    os.remove(self.db)
+                if os.path.exists(self.db):
+                    sys.stderr.write('Using existing database {}.\n'
+                                    .format(self.db))
+                    self._initdb()
+                    return
+                self._initdb()
+                with open_zipped(snp_file_dir) as fin:
+                    header = fin.readline().rstrip()
+                    if header.startswith('##'):
+                        if 'VCF' not in header:
+                            raise self.SNP_Error('VCF file should start with '
+                                                '##fileformat=VCF')
+                    elif header.startswith('#') and not header.startswith('#CHROM'):
+                        raise self.SNP_Error('VCF Header should start with #CHROM')
+                    elif not header.split('\t')[1].isdigit():
+                        raise self.SNP_Error('VCF file appears malformatted, '
+                                            'second column should be an int.')
+                    fin.seek(0)
+                    for line in fin:
+                        if line.startswith('#'):
+                            continue
+                        chrom, pos, _, ref, alt = line.split('\t')[:5]
+                        self._add_table_if_none(chrom)
+                        pos = int(pos)
+                        expr = ("INSERT INTO '{}' VALUES (?,?,?)"
+                                .format(chrom))
+                        self._c.execute(expr, (pos, ref, alt))
+                    self._conn.commit()
+                self.length = len(self)
+
         else:
             raise OSError('File not found {}'.format(snp_file_dir))
 
