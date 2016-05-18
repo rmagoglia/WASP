@@ -15,8 +15,6 @@ import sqlite3
 import os
 import sys
 from collections import defaultdict, Counter
-from glob import glob
-from os import path
 from pysam import AlignmentFile as Samfile
 
 try:
@@ -75,18 +73,15 @@ class SNPDB(object):
                 with open_zipped(fl) as fin:
                     tln = fin.readline().rstrip().split('\t')
                     if len(tln) != 3 or not tln[0].isdigit():
-                        sys.stderr.write(tln + '\n')
+                        sys.stderr.write("{}\n".format(tln))
                         raise self.SNP_Error('File {} is not a snp file.'
                                              .format(fl))
                     fin.seek(0)
-                    for line in fin:
-                        pos, ref, alt = line.rstrip().split('\t')
-                        pos = int(pos)
-                        expr = ("INSERT INTO '{}' VALUES (?,?,?)"
-                                .format(chrom))
-                        self._c.execute(expr, (pos, ref, alt))
-                        length += 1
-                self.chromosomes[chrom] = self.Chromosome(self, chrom, length)
+                    self.chromosomes[chrom] = self.Chromosome(self, chrom, length)
+                    self._c.executemany("INSERT INTO '{}' VALUES (?, ?, ?)"
+                                        .format(chrom),
+                                        (line.strip().split('\t') for line in fin)
+                                       )
                 self._conn.commit()
 
         elif os.path.isfile(snp_file_dir):
@@ -157,8 +152,6 @@ class SNPDB(object):
     def find(self, chromosome, location=None):
         """ Return ref, alt if found, None if not. """
         if chromosome not in self.chromosomes:
-            sys.stderr.write("WARNING --> Chromosome '{}' is not in chromosome"
-                             "list.\n")
             return None
 
         tables = 'ref,alt' if location else 'pos,ref,alt'
@@ -299,15 +292,16 @@ class SNPDB(object):
 
     def __getattr__(self, attr):
         """Prevent lookup of attributes if already set."""
-        if attr == 'length':
-            return self.length if hasattr(self, 'length') else len(self)
+        if attr == "length":
+            return self.length if hasattr(self, "length") else len(self)
 
     def __len__(self):
         """The total number of SNPs."""
         length = 0
         self._c.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        chromosomes = self._c.fetchone()
+        chromosomes = self._c.fetchall()
         for chrom in chromosomes:
+            chrom = chrom[0]
             self._c.execute("SELECT Count(*) FROM '{}';".format(chrom))
             l = self._c.fetchone()[0]
             self.chromosomes[chrom] = self.Chromosome(self, chrom, l)
@@ -318,6 +312,7 @@ class SNPDB(object):
     def __iter__(self):
         """Iterate over every SNP."""
         for chrom in self.chromosomes:
+            print("Iterating over chromosome {}".format(chrom))
             self._c.execute("SELECT * FROM {};".format(chrom))
             for row in self._c:
                 pos, ref, alt = row
@@ -378,7 +373,7 @@ def reverse_complement(seq):
     return seq.translate(RC_TABLE)[::-1]
 
 
-def get_dual_read_seqs(read1, read2, snps, indel_dict, dispositions):
+def get_dual_read_seqs(read1, read2, snps_db, indel_dict, dispositions):
     """ For each pair of reads, get all concordant SNP substitutions
 
     Note that if the reads overlap, the matching positions in read1 and read2
@@ -399,7 +394,7 @@ def get_dual_read_seqs(read1, read2, snps, indel_dict, dispositions):
         if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
-        allele_info = snps[chrom, ref_pos]
+        allele_info = snps_db[chrom, ref_pos]
         if allele_info:
             snps[ref_pos] = allele_info
             read_posns[ref_pos][0] = read_pos1
@@ -408,7 +403,7 @@ def get_dual_read_seqs(read1, read2, snps, indel_dict, dispositions):
         if indel_dict[chrom].get(ref_pos, False):
             dispositions['toss_indel'] += 1
             return [[], []]
-        allele_info = snps[chrom, ref_pos]
+        allele_info = snps_db[chrom, ref_pos]
         if allele_info:
             snps[ref_pos] = allele_info
             read_posns[ref_pos][1] = read_pos2
@@ -647,6 +642,7 @@ if __name__ == "__main__":
 
     global SNPS
     snps       = SNPDB(options.snp_dir)
+    print("Finding indels")
     indel_dict = get_indels(snps)
 
     print("Done with SNPs")
