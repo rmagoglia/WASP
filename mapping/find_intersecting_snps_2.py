@@ -28,7 +28,7 @@ def product(iterable):
     "Returns the product of all items in the iterable"
     return reduce(mul, iterable, 1)
 
-def get_snps(snpdir):
+def get_snps(snpdir, chrom_only = None):
     """Get SNPs from a single file or directory of files
 
     Returns a dictionary of dictionaries:
@@ -47,12 +47,16 @@ def get_snps(snpdir):
         print("Loading snps from consolidated file")
         for line in gzip.open(path.join(snpdir, 'all.txt.gz'), 'rt', encoding='ascii'):
             chrom, pos, ref, alt = line.split()
+            if chrom_only is not None and chrom != chrom_only:
+                continue
             pos = int(pos) - 1
             snp_dict[chrom][pos] = "".join([ref, alt])
         return snp_dict
     for fname in glob(path.join(snpdir, '*.txt.gz')):
-        print("Loading snps from ", fname)
         chrom = path.basename(fname).split('.')[0]
+        if chrom_only is not None and chrom != chrom_only:
+            continue
+        print("Loading snps from ", fname)
         i = -1
         for i, line in enumerate(gzip.open(fname, 'rt', encoding='ascii')):
             pos, ref, alt = line.split()
@@ -300,8 +304,6 @@ def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap
             num_seqs-1,
         )
 
-        if left_pos == 16053407:
-            print(seqs)
         first = True
         # Some python fanciness to deal with single or paired end reads (or
         # n-ended reads, if such technology ever happens.
@@ -329,6 +331,9 @@ if __name__ == "__main__":
                         dest='is_paired_end', default=False,
                         help=('Indicates that reads are '
                               'paired-end (default is single).'))
+    parser.add_argument('-C', '--limit-to-chrom',
+                        default=None,
+                        help="Limit loading of SNPs to the specified chromosome")
 
     parser.add_argument("-s", "--sorted",
                         action='store_true', dest='is_sorted', default=False,
@@ -349,7 +354,7 @@ if __name__ == "__main__":
 
     options = parser.parse_args()
 
-    SNP_DICT = get_snps(options.snp_dir)
+    SNP_DICT = get_snps(options.snp_dir, options.limit_to_chrom)
     INDEL_DICT = get_indels(SNP_DICT)
 
     print("Done with SNPs")
