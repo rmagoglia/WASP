@@ -9,6 +9,7 @@ RAM.
 from __future__ import print_function
 import argparse
 import gzip
+import time
 import itertools as it
 from collections import defaultdict, Counter
 from glob import glob
