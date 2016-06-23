@@ -300,7 +300,6 @@ def assign_reads(insam, snp_dict, indel_dict, is_paired=True):
             ((read_results['not_proper_pair'] / total_pairs)*100) + "%)")
     
     print()
-    print(read_results)
 
 def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap_num=0):
     """Write the given reads out to the appropriate file
