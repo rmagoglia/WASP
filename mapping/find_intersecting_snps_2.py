@@ -346,8 +346,6 @@ def write_read_seqs(both_read_seqs, keep, remap_bam, fastqs, dropped=None, remap
         for read, seqs in both_read_seqs:
             keep.write(read)
     else:
-        print()
-        
         assert len(reads) > 0
         for read in reads:
             remap_bam.write(read)
