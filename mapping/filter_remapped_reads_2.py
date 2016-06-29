@@ -90,9 +90,6 @@ def run(to_remap_bam, remap_bam, keep_bam, is_paired_end):
     # number if paired end data.
     line_num = 1
     
-    # Index for walking through correct_maps.
-    map_indx = 0
-    
     # Number of correctly mapped reads for the current read (pair).
     correct = 0
     
@@ -139,7 +136,6 @@ def run(to_remap_bam, remap_bam, keep_bam, is_paired_end):
         
         else:
             correct += 1
-            map_indx += 1
 
     if correct == orig_num:
         total_correct += 1
