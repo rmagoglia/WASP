@@ -3,7 +3,8 @@
 This is a rewrite of the official WASP code, which no longer requires
 a .num.gz file. This code is compatable with the rewritten version of 
 the first step (find_intersecting_snps), which no longer generates the
-.num.gz file.
+.num.gz file. The bam file of remapped reads must be sorted by read name.
+Must be run in Python2.
 
 """
 
@@ -33,10 +34,15 @@ def run(to_remap_bam, remap_bam, keep_bam, is_paired_end):
     end_of_file = False
     prev_read_num = 0
 
+    # Keep track of remapped read index
+    counter = 1
+    skip = 0
+
     # Get a list of reads that remapped correctly
     remap_read = remap_bam.next()
     
     while not end_of_file:
+
 
         chrm = remap_read.qname.strip().split(":")[1]
         
@@ -54,12 +60,20 @@ def run(to_remap_bam, remap_bam, keep_bam, is_paired_end):
 
         # For each original read, keep track of how many alternate reads were mapped
         if read_num != prev_read_num:
+
+            # If none of the alternate versions of the read got mapped, set num to 1 
+            if read_num != counter:
+                skipped = read_num - counter
+                nums += ([1]*skipped)
+                counter = read_num
+                
             if is_paired_end:
                 nums.append(num*2)
             else:
                 nums.append(num)
             
             prev_read_num = read_num
+            counter += 1
 
         if (remap_read.tid != -1 and remap_read.pos == pos and 
             remap_bam.getrname(remap_read.tid) == chrm):
