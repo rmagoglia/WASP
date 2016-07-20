@@ -36,7 +36,6 @@ def run(to_remap_bam, remap_bam, keep_bam, is_paired_end):
 
     # Keep track of remapped read index
     counter = 1
-    skip = 0
 
     # Get a list of reads that remapped correctly
     remap_read = remap_bam.next()
